@@ -1,0 +1,63 @@
+name: expo-app-metrics iOS unit tests
+
+on:
+  push:
+    branches: [ci/expo-unit-tests]
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    name: unit tests (${{ matrix.variant }})
+    runs-on: macos-26
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [with-fix, without-fix]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: michalstanczyk/expo
+          ref: fix/app-metrics-delegate-proxy-detox
+          fetch-depth: 2
+
+      - name: Restore the original DelegateProxy, keeping the new tests
+        if: matrix.variant == 'without-fix'
+        run: |
+          f=packages/expo-app-metrics/ios/NetworkRequests/NetworkRequestTaskSwizzling.swift
+          git show HEAD~1:$f > $f
+          git diff --stat
+
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode_26*.app
+          if [ -d /Applications/Xcode_26.4.1.app ]; then x=/Applications/Xcode_26.4.1.app; else x=/Applications/Xcode_26.6.app; fi
+          sudo xcode-select --switch $x
+          xcodebuild -version
+
+      - run: echo "$(pwd)/bin" >> $GITHUB_PATH
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+          ruby-version: 3.4.11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pod install
+        working-directory: apps/bare-expo/ios
+
+      - run: pnpm expotools native-unit-tests --platform ios --packages expo-app-metrics
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-unit-tests-results-${{ matrix.variant }}
+          path: /tmp/ios-unit-tests-results
