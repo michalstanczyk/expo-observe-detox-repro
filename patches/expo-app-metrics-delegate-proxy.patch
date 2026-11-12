@@ -1,0 +1,63 @@
+diff --git a/ios/NetworkRequests/NetworkRequestTaskSwizzling.swift b/ios/NetworkRequests/NetworkRequestTaskSwizzling.swift
+index 9d818811a4e2be85ed6dcda3771d30aa635dbeb1..e8c24d087f92e3e54718c30d8f23757040f39c64 100644
+--- a/ios/NetworkRequests/NetworkRequestTaskSwizzling.swift
++++ b/ios/NetworkRequests/NetworkRequestTaskSwizzling.swift
+@@ -563,6 +563,8 @@ private final class DelegateProxy: NSObject {
+   }
+ 
+   private static let metricsSelector = NSSelectorFromString("URLSession:task:didFinishCollectingMetrics:")
++  private static let didCompleteSelector = NSSelectorFromString("URLSession:task:didCompleteWithError:")
++  private static let didReceiveResponseSelector = NSSelectorFromString("URLSession:dataTask:didReceiveResponse:completionHandler:")
+ 
+   override func responds(to aSelector: Selector!) -> Bool {
+     if aSelector == Self.metricsSelector {
+@@ -600,6 +602,49 @@ private final class DelegateProxy: NSObject {
+     return wrapped
+   }
+ 
++  /// Concrete forwarders for the completion callbacks that tools which dynamically subclass session
++  /// delegates (Detox's `__detox_sync_URLSessionDelegateProxy`) re-dispatch to `super`. They gate
++  /// that call on `+instancesRespondToSelector:`, a class-level check that never consults
++  /// `forwardingTarget(for:)`, so without these the wrapped delegate never learns its task finished
++  /// and every request hangs. `responds(to:)` still mirrors the wrapped delegate, so `URLSession`
++  /// itself only calls these when the wrapped delegate implements them.
++  ///
++  /// Dispatch goes through the Obj-C runtime rather than a Swift protocol cast, like `URLSession`
++  /// does: delegates such as expo-file-system's `EXSessionTaskDispatcher` implement these
++  /// selectors while declaring only `NSURLSessionDelegate`, so `as? URLSessionTaskDelegate` fails.
++  @objc(URLSession:task:didCompleteWithError:)
++  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
++    guard let target = wrapped as? NSObject, target.responds(to: Self.didCompleteSelector) else {
++      return
++    }
++    typealias DidComplete = @convention(c) (AnyObject, Selector, URLSession, URLSessionTask, NSError?) -> Void
++    let implementation = unsafeBitCast(target.method(for: Self.didCompleteSelector), to: DidComplete.self)
++    implementation(target, Self.didCompleteSelector, session, task, error as NSError?)
++  }
++
++  @objc(URLSession:dataTask:didReceiveResponse:completionHandler:)
++  func urlSession(
++    _ session: URLSession,
++    dataTask: URLSessionDataTask,
++    didReceive response: URLResponse,
++    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
++  ) {
++    guard let target = wrapped as? NSObject, target.responds(to: Self.didReceiveResponseSelector) else {
++      completionHandler(.allow)
++      return
++    }
++    typealias DidReceiveResponse = @convention(c) (
++      AnyObject,
++      Selector,
++      URLSession,
++      URLSessionDataTask,
++      URLResponse,
++      @escaping @convention(block) (URLSession.ResponseDisposition) -> Void
++    ) -> Void
++    let implementation = unsafeBitCast(target.method(for: Self.didReceiveResponseSelector), to: DidReceiveResponse.self)
++    implementation(target, Self.didReceiveResponseSelector, session, dataTask, response) { completionHandler($0) }
++  }
++
+   /// Canonical recording site. `didFinishCollectingMetrics:` is Apple's "task is fully done" signal
+   /// — by the time it fires, the last byte has been transferred and `task.error` / `task.response`
+   /// are stable. We capture metrics, record the snapshot, then forward to the wrapped delegate.

@@ -1,0 +1,46 @@
+name: Detox iOS
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  detox:
+    name: detox (${{ matrix.variant }})
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [unpatched, patched]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.6"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx --yes expo-env-info
+
+      - name: Apply the DelegateProxy fix to expo-app-metrics
+        if: matrix.variant == 'patched'
+        run: patch -p1 -d node_modules/expo-app-metrics < patches/expo-app-metrics-delegate-proxy.patch
+
+      - run: npx expo prebuild --platform ios --clean
+
+      - run: npx detox build -c ios.sim.release
+
+      - run: npx detox test -c ios.sim.release --artifacts-location artifacts --record-logs all --take-screenshots all
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: detox-artifacts-${{ matrix.variant }}
+          path: artifacts
