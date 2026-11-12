@@ -17,6 +17,8 @@ The [Detox iOS workflow](.github/workflows/detox-ios.yml) runs the same test twi
 | `unpatched` | stock `expo-observe` / `expo-app-metrics` | fails: the text stays `loading` |
 | `patched` | [`patches/expo-app-metrics-delegate-proxy.patch`](patches/expo-app-metrics-delegate-proxy.patch) applied to `node_modules/expo-app-metrics` | passes |
 
+Example run: [43225278541](https://github.com/michalstanczyk/expo-observe-detox-repro/actions/runs/43225278541). `unpatched` times out after 30 s with the text still `loading`; `patched` passes in about 5 s.
+
 ## Why
 
 Both Detox and `expo-app-metrics` swizzle `+[NSURLSession sessionWithConfiguration:delegate:delegateQueue:]`:
