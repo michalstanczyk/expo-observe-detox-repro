@@ -6,6 +6,61 @@ on:
   workflow_dispatch:
 
 jobs:
+  swift-format:
+    runs-on: ubuntu-24.04
+    env:
+      SWIFT_FORMAT_VERSION: '603.0.0-prerelease-2026-02-09'
+      SWIFT_VERSION: '6.3'
+      SWIFT_PLATFORM: ubuntu24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: michalstanczyk/expo
+          ref: fix/app-metrics-delegate-proxy-detox
+      - name: Install Swift
+        run: |
+          set -euo pipefail
+          tag="swift-${SWIFT_VERSION}-RELEASE"
+          slug="$(echo "$SWIFT_PLATFORM" | tr -d .)"
+          url="https://download.swift.org/swift-${SWIFT_VERSION}-release/${slug}/${tag}/${tag}-${SWIFT_PLATFORM}.tar.gz"
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends binutils git gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-13-dev libsqlite3-0 libstdc++-13-dev libxml2-dev libz3-dev pkg-config tzdata unzip zlib1g-dev
+          curl -fsSL "$url" -o /tmp/swift.tar.gz
+          sudo mkdir -p /opt/swift
+          sudo tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
+          echo "/opt/swift/usr/bin" >> "$GITHUB_PATH"
+      - name: Build swift-format
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.local/bin
+          tmp=$(mktemp -d)
+          git clone --depth 1 --branch "$SWIFT_FORMAT_VERSION" https://github.com/swiftlang/swift-format.git "$tmp"
+          (cd "$tmp" && swift build -c release)
+          cp "$tmp/.build/release/swift-format" ~/.local/bin/swift-format
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: ./scripts/swift-format.sh --lint packages/expo-app-metrics
+
+  check-packages:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: michalstanczyk/expo
+          ref: fix/app-metrics-delegate-proxy-detox
+          fetch-depth: 100
+      - run: git fetch https://github.com/expo/expo.git main:main --depth 100
+      - run: echo "$(pwd)/bin" >> $GITHUB_PATH
+      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b
+        with:
+          install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: et check-packages expo-app-metrics
+      - run: pnpm changeset status --since main
+
   unit-tests:
     name: unit tests (${{ matrix.variant }})
     runs-on: macos-26
@@ -56,7 +111,7 @@ jobs:
       - run: pod install
         working-directory: apps/bare-expo/ios
 
-      - run: pnpm expotools native-unit-tests --platform ios --packages expo-app-metrics
+      - run: et native-unit-tests --platform ios --packages expo-app-metrics
 
       - uses: actions/upload-artifact@v4
         if: always()
